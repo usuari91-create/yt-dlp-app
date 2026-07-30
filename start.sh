@@ -1,40 +1,58 @@
-FROM python:3.11-slim
+#!/usr/bin/env bash
+# Start the YT-DLP web app (v2).
+#
+# - Installs Python deps if missing
+# - Clones + builds the bgutil POT server if missing
+# - Starts the POT server in the background (auto-started by the backend too)
+# - Starts the FastAPI backend in the foreground
+set -e
 
-# ---- Dependencias de sistema: ffmpeg, node, git ----
-RUN apt-get update && apt-get install -y --no-install-recommends \
-        ffmpeg git curl ca-certificates gnupg \
-    && curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
-    && apt-get install -y --no-install-recommends nodejs \
-    && rm -rf /var/lib/apt/lists/*
+cd "$(dirname "$0")"
 
-WORKDIR /app
+PY="${PYTHON:-python3}"
 
-# ---- Backend Python ----
-COPY backend/requirements.txt backend/requirements.txt
-RUN pip install --no-cache-dir -r backend/requirements.txt
+# ----- ffmpeg -----
+if ! command -v ffmpeg >/dev/null 2>&1; then
+  echo "[!] ffmpeg is required for audio/video conversion."
+  echo "    Install it with: sudo apt-get install ffmpeg   (Debian/Ubuntu)"
+  echo "                     brew install ffmpeg           (macOS)"
+  exit 1
+fi
 
-COPY backend backend
-COPY frontend frontend
+# ----- Python deps -----
+if ! "$PY" -c "import yt_dlp, fastapi, uvicorn, httpx" 2>/dev/null; then
+  echo "[*] Installing Python dependencies..."
+  "$PY" -m pip install --break-system-packages -r backend/requirements.txt
+fi
 
-# ---- bgutil POT provider (clonado y compilado en build time) ----
-ARG BGUTIL_BRANCH=1.3.1
-RUN git clone --single-branch --branch ${BGUTIL_BRANCH} --depth 1 \
-        https://github.com/Brainicism/bgutil-ytdlp-pot-provider.git \
-        /opt/bgutil-provider \
-    && cd /opt/bgutil-provider/server \
-    && npm ci --no-audit --no-fund \
-    && npx tsc
+# ----- bgutil POT server (cloned + built once) -----
+BGUTIL_DIR="${BGUTIL_DIR:-/opt/bgutil-provider/server}"
+BGUTIL_REPO="https://github.com/Brainicism/bgutil-ytdlp-pot-provider.git"
+BGUTIL_BRANCH="${BGUTIL_BRANCH:-1.3.1}"
 
-ENV BGUTIL_DIR=/opt/bgutil-provider/server
-ENV HOST=0.0.0.0
+if [ ! -d "$BGUTIL_DIR" ]; then
+  if command -v git >/dev/null 2>&1; then
+    echo "[*] Cloning bgutil POT provider into $BGUTIL_DIR"
+    sudo mkdir -p "$(dirname "$BGUTIL_DIR")"
+    sudo git clone --single-branch --branch "$BGUTIL_BRANCH" --depth 1 \
+      "$BGUTIL_REPO" "$(dirname "$BGUTIL_DIR")/bgutil-provider"
+  else
+    echo "[!] git is required to fetch the bgutil POT provider. Install git or pre-populate $BGUTIL_DIR"
+    exit 1
+  fi
+fi
 
-# Directorios de datos (cookies, descargas temporales).
-# Nota: en Render (nivel free) el disco es efimero entre despliegues,
-# aunque persiste mientras la instancia esta viva/dormida.
-RUN mkdir -p backend/data backend/downloads
+if [ -d "$BGUTIL_DIR" ] && [ ! -f "$BGUTIL_DIR/build/main.js" ]; then
+  echo "[*] Building bgutil POT server..."
+  (cd "$BGUTIL_DIR" && (npm ci --no-audit --no-fund || npm install --no-audit --no-fund) && npx tsc)
+fi
 
-EXPOSE 8000
+# Export the path so the backend picks it up
+export BGUTIL_DIR
 
-# Render inyecta la variable $PORT en tiempo de ejecucion; si no existe
-# (por ejemplo al correr esto en local), usamos 8000 por defecto.
-CMD ["sh", "-c", "python3 -m uvicorn main:app --app-dir backend --host 0.0.0.0 --port ${PORT:-8000}"]
+HOST="${HOST:-0.0.0.0}"
+PORT="${PORT:-8000}"
+
+echo "[*] Starting YT-DLP web app on http://$HOST:$PORT"
+cd backend
+exec "$PY" -m uvicorn main:app --host "$HOST" --port "$PORT"

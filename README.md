@@ -1,266 +1,105 @@
-:root {
-  --bg: #0b0d12;
-  --bg-soft: #11141b;
-  --card: #161a23;
-  --card-2: #1c2230;
-  --border: #2a3142;
-  --text: #e8ecf3;
-  --text-dim: #97a0b3;
-  --primary: #ff3b3b;
-  --primary-2: #ff6b6b;
-  --accent: #4f8cff;
-  --ok: #2ecc71;
-  --err: #ff5c5c;
-  --warn: #ffb84d;
-  --shadow: 0 10px 30px rgba(0, 0, 0, 0.35);
-  --radius: 14px;
-}
+# YT-DLP Web App (v2)
 
-* { box-sizing: border-box; }
+Self-hosted web UI around [`yt-dlp`](https://github.com/yt-dlp/yt-dlp) with built-in
+PO Token generation (via [`bgutil-ytdlp-pot-provider`](https://github.com/Brainicism/bgutil-ytdlp-pot-provider))
+and cookie upload for YouTube.
 
-html, body {
-  margin: 0;
-  padding: 0;
-  background:
-    radial-gradient(1200px 600px at 80% -10%, rgba(255, 59, 59, 0.18), transparent 60%),
-    radial-gradient(1000px 500px at -10% 30%, rgba(79, 140, 255, 0.18), transparent 60%),
-    var(--bg);
-  color: var(--text);
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Oxygen, Ubuntu, "Helvetica Neue", Arial, sans-serif;
-  min-height: 100vh;
-  -webkit-font-smoothing: antialiased;
-}
+## Features
 
-.app {
-  max-width: 880px;
-  margin: 0 auto;
-  padding: 48px 20px 24px;
-  display: flex;
-  flex-direction: column;
-  gap: 18px;
-}
+- 🎬 Download video as **mp4** (up to 1080p)
+- 🎵 Download audio as **mp3** (96 / 128 / 192 / 320 kbps)
+- 🔍 Preview metadata (title, channel, duration, views, thumbnail) before downloading
+- 🔐 **Cookie upload** — bring your own `cookies.txt` for YouTube
+- 🪪 **PO Token server** — auto-started in the background (Node.js + bgutil POT)
+- 🌐 Works with YouTube, Vimeo, Twitter/X, TikTok, SoundCloud, Reddit, Twitch, Bandcamp, etc.
+  (any site yt-dlp supports)
+- 📦 Single-process install: clones + builds bgutil on first run
 
-.hero { text-align: center; margin-bottom: 8px; }
-.hero h1 {
-  font-size: 40px;
-  margin: 0 0 8px;
-  background: linear-gradient(90deg, #fff, #ffb3b3 60%, #ff6b6b);
-  -webkit-background-clip: text;
-  background-clip: text;
-  color: transparent;
-  letter-spacing: -0.02em;
-}
-.tagline { margin: 0; color: var(--text-dim); font-size: 15px; }
+## Requirements
 
-.card {
-  background: linear-gradient(180deg, var(--card), var(--card-2));
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  padding: 24px;
-  box-shadow: var(--shadow);
-}
+- **Python 3.9+**
+- **FFmpeg** (on `PATH` — needed for audio conversion and video merging)
+- **Node.js 20+** (for yt-dlp's JS challenge solver + bgutil POT provider)
+- **git** (only on first install — to fetch bgutil)
+- Internet access to the target site
 
-.form { display: block; }
+## Install & run
 
-.label {
-  display: block;
-  font-size: 13px;
-  color: var(--text-dim);
-  margin-bottom: 8px;
-  letter-spacing: 0.02em;
-  text-transform: uppercase;
-}
+```bash
+# 1. System deps
+sudo apt-get install -y ffmpeg nodejs git     # Debian / Ubuntu
+brew install ffmpeg node git                  # macOS
 
-.row {
-  display: flex;
-  gap: 10px;
-  flex-wrap: wrap;
-  align-items: center;
-}
+# 2. Start
+chmod +x start.sh
+./start.sh
+# -> open http://localhost:8000
+```
 
-input[type="url"], input[type="file"], select {
-  flex: 1 1 280px;
-  min-width: 0;
-  background: var(--bg-soft);
-  border: 1px solid var(--border);
-  color: var(--text);
-  padding: 12px 14px;
-  border-radius: 10px;
-  font-size: 15px;
-  outline: none;
-  transition: border-color 0.15s ease, box-shadow 0.15s ease;
-}
+The first run installs Python deps, clones bgutil, builds it, then starts the
+FastAPI app. The POT server is launched as a child process automatically.
 
-input[type="file"] {
-  padding: 9px 14px;
-  font-size: 14px;
-}
+Or run the backend directly:
 
-input[type="url"]:focus, input[type="file"]:focus, select:focus {
-  border-color: var(--primary);
-  box-shadow: 0 0 0 3px rgba(255, 59, 59, 0.18);
-}
+```bash
+cd backend
+python3 -m uvicorn main:app --host 0.0.0.0 --port 8000
+```
 
-.btn {
-  appearance: none;
-  border: none;
-  cursor: pointer;
-  font-weight: 600;
-  font-size: 15px;
-  padding: 12px 18px;
-  border-radius: 10px;
-  background: var(--card-2);
-  color: var(--text);
-  border: 1px solid var(--border);
-  transition: transform 0.05s ease, background 0.15s ease, border-color 0.15s ease, opacity 0.15s ease;
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  white-space: nowrap;
-}
-.btn:hover { border-color: #3a4356; }
-.btn:active { transform: translateY(1px); }
-.btn:disabled { opacity: 0.6; cursor: not-allowed; }
-.btn.primary {
-  background: linear-gradient(180deg, var(--primary-2), var(--primary));
-  border-color: transparent;
-  color: #fff;
-  box-shadow: 0 6px 18px rgba(255, 59, 59, 0.28);
-}
-.btn.primary:hover { filter: brightness(1.05); }
-.btn.big { width: 100%; justify-content: center; padding: 14px 18px; font-size: 16px; margin-top: 16px; }
-.btn.danger { color: #ffb0b0; border-color: #5a2a2a; }
-.btn.danger:hover { background: #2a1414; }
+## YouTube & anti-bot: the honest version
 
-.spinner {
-  width: 14px; height: 14px;
-  border: 2px solid rgba(255, 255, 255, 0.45);
-  border-top-color: #fff;
-  border-radius: 50%;
-  animation: spin 0.8s linear infinite;
-}
-@keyframes spin { to { transform: rotate(360deg); } }
+YouTube applies strong anti-bot protections, especially against datacenter IPs.
+The app handles them in three layers:
 
-.hint { margin: 10px 0 0; font-size: 12px; color: var(--text-dim); }
-.hint code { background: var(--bg-soft); padding: 1px 5px; border-radius: 4px; }
+1. **PO Token server** — bgutil-ytdlp-pot-provider runs locally and generates
+   proof-of-origin tokens that yt-dlp sends to YouTube. The server is
+   auto-started by the backend.
+2. **JS runtime** — yt-dlp's challenge solver is wired to `node` automatically.
+3. **Cookies** — if YouTube still blocks you, the UI has a panel to upload a
+   `cookies.txt` exported from a logged-in browser. Cookies are stored on disk
+   and reused for subsequent requests.
 
-/* Info */
-.info {
-  display: grid;
-  grid-template-columns: 220px 1fr;
-  gap: 16px;
-  margin-top: 20px;
-  padding-top: 20px;
-  border-top: 1px dashed var(--border);
-}
-.info-media img {
-  width: 100%; border-radius: 10px; display: block;
-  background: #000; aspect-ratio: 16 / 9; object-fit: cover;
-}
-.info-body h2 { margin: 0 0 6px; font-size: 18px; line-height: 1.3; }
-.meta { margin: 0 0 8px; color: var(--text-dim); font-size: 13px; }
-.meta .dot { margin: 0 6px; opacity: 0.5; }
-.desc {
-  margin: 6px 0 0; color: var(--text-dim); font-size: 13px; line-height: 1.5;
-  display: -webkit-box; -webkit-line-clamp: 4; -webkit-box-orient: vertical; overflow: hidden;
-}
+If all three fail (which is expected from a datacenter IP without a real
+YouTube session), the API returns a clear, actionable error and the UI tells
+the user exactly what to do.
 
-.grid {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 14px;
-  margin-top: 20px;
-  padding-top: 20px;
-  border-top: 1px dashed var(--border);
-}
-.field label {
-  display: block; font-size: 13px; color: var(--text-dim); margin-bottom: 8px;
-  text-transform: uppercase; letter-spacing: 0.02em;
-}
+The other ~1500 sites supported by yt-dlp (Vimeo, SoundCloud, Bandcamp,
+Twitter/X, etc.) work **without any of this**.
 
-.seg {
-  display: inline-flex; background: var(--bg-soft);
-  border: 1px solid var(--border); border-radius: 10px; padding: 4px; gap: 4px; width: 100%;
-}
-.seg-btn {
-  flex: 1; appearance: none; background: transparent; border: 0; color: var(--text-dim);
-  padding: 9px 12px; font-weight: 600; border-radius: 8px; cursor: pointer;
-  transition: background 0.15s ease, color 0.15s ease;
-}
-.seg-btn.active {
-  background: linear-gradient(180deg, var(--primary-2), var(--primary));
-  color: #fff; box-shadow: 0 4px 12px rgba(255, 59, 59, 0.25);
-}
+## API
 
-select {
-  width: 100%; appearance: none;
-  background-image:
-    linear-gradient(45deg, transparent 50%, var(--text-dim) 50%),
-    linear-gradient(135deg, var(--text-dim) 50%, transparent 50%);
-  background-position: calc(100% - 18px) 50%, calc(100% - 13px) 50%;
-  background-size: 5px 5px, 5px 5px;
-  background-repeat: no-repeat;
-  padding-right: 36px;
-}
+| Method | Path                    | Description                                                |
+|--------|-------------------------|------------------------------------------------------------|
+| GET    | `/api/health`           | `{ok, yt_dlp_version, ffmpeg, node, pot_server, cookies}`  |
+| GET    | `/api/info?url=&cookies=` | Returns metadata for the URL (no download).              |
+| GET    | `/api/cookies/status`   | Whether a cookies file is configured.                      |
+| POST   | `/api/cookies/upload`   | multipart `file` field — Netscape `cookies.txt`.           |
+| POST   | `/api/cookies/clear`    | Drop the configured cookies.                               |
+| POST   | `/api/download`         | Body: `{url, format_type, quality, cookies}`. Streams file. |
 
-.status { margin: 12px 0 0; font-size: 13px; min-height: 18px; }
-.status.ok    { color: var(--ok); }
-.status.err   { color: var(--err); }
-.status.warn  { color: var(--warn); }
-.status.busy  { color: var(--accent); }
+`cookies` can be `"auto"` (use uploaded file if present), `"none"`, `"browser"`,
+or `"upload"`.
 
-/* Cookies card */
-.cookies-card details > summary {
-  list-style: none;
-  cursor: pointer;
-  display: flex; align-items: center; justify-content: space-between;
-  font-weight: 600;
-  user-select: none;
-}
-.cookies-card details > summary::-webkit-details-marker { display: none; }
-.cookies-card details[open] > summary { margin-bottom: 14px; }
+## Project layout
 
-.badge {
-  font-size: 11px;
-  padding: 3px 8px;
-  border-radius: 999px;
-  font-weight: 600;
-  background: var(--bg-soft);
-  color: var(--text-dim);
-  border: 1px solid var(--border);
-}
-.badge.ok   { background: rgba(46, 204, 113, 0.15); color: var(--ok); border-color: rgba(46, 204, 113, 0.4); }
-.badge.warn { background: rgba(255, 184, 77, 0.15); color: var(--warn); border-color: rgba(255, 184, 77, 0.4); }
+```
+yt-dlp-app/
+├── backend/
+│   ├── main.py             # FastAPI app (info / download / cookies / POT lifecycle)
+│   ├── requirements.txt
+│   ├── data/               # created at runtime: cookies.txt, pot-server.log
+│   └── downloads/          # created at runtime: per-job tempdirs (auto-cleaned)
+├── frontend/
+│   ├── index.html
+│   ├── style.css
+│   └── app.js
+├── start.sh                # one-shot installer + runner
+└── README.md
+```
 
-.cookies-body { display: block; }
-.howto {
-  background: var(--bg-soft);
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  padding: 10px 14px;
-  margin: 12px 0;
-}
-.howto summary { cursor: pointer; color: var(--accent); font-weight: 600; font-size: 13px; }
-.howto ol { margin: 10px 0 4px; padding-left: 22px; font-size: 13px; color: var(--text-dim); }
-.howto li { margin-bottom: 4px; }
-.howto a { color: var(--accent); }
+## Notes
 
-.cookies-row { margin-top: 8px; }
-
-.footer {
-  margin-top: 8px;
-  display: flex; justify-content: space-between;
-  font-size: 12px; color: var(--text-dim);
-}
-.server-status::before { content: "● "; color: var(--text-dim); }
-.server-status.ok::before  { color: var(--ok); }
-.server-status.err::before { color: var(--err); }
-
-@media (max-width: 640px) {
-  .app { padding: 28px 14px 18px; }
-  .hero h1 { font-size: 30px; }
-  .info { grid-template-columns: 1fr; }
-  .grid { grid-template-columns: 1fr; }
-  .cookies-row { flex-direction: column; align-items: stretch; }
-  .cookies-row .btn { width: 100%; justify-content: center; }
-}
+- File size is capped at 2 GB per download. Adjust `MAX_FILE_SIZE` in `backend/main.py`.
+- Cookies file lives at `backend/data/cookies.txt`. Delete it to wipe.
+- The bgutil POT server logs to `backend/data/pot-server.log`.
+- Respect content creators and site ToS.
