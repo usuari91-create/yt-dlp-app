@@ -1,0 +1,6 @@
+yt-dlp>=2024.8.6
+fastapi>=0.110.0
+uvicorn[standard]>=0.27.0
+httpx>=0.27.0
+python-multipart>=0.0.9
+bgutil-ytdlp-pot-provider>=1.3.1
