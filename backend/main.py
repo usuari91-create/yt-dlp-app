@@ -98,6 +98,11 @@ class BasicAuthMiddleware(BaseHTTPMiddleware):
         if not _APP_USER or not _APP_PASSWORD:
             return await call_next(request)
 
+        # El health check de Render no manda credenciales; hay que dejarlo pasar
+        # siempre o Render pensara que la app no responde.
+        if request.url.path == "/api/health":
+            return await call_next(request)
+
         auth = request.headers.get("authorization")
         if auth and auth.startswith("Basic "):
             try:
