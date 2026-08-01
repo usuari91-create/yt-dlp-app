@@ -53,7 +53,7 @@ POT_PORT = int(os.environ.get("POT_PORT", "4416"))
 POT_BASE_URL = f"http://127.0.0.1:{POT_PORT}"
 
 MAX_FILE_SIZE = 2 * 1024 * 1024 * 1024  # 2 GB
-POT_START_TIMEOUT = 20.0
+POT_START_TIMEOUT = 45.0
 
 for d in (DOWNLOAD_DIR, DATA_DIR):
     d.mkdir(parents=True, exist_ok=True)
@@ -340,6 +340,9 @@ def health():
 def get_info(url: str = Query(..., min_length=1), cookies: str = "auto"):
     url = _validate_url(url)
     cookies_mode = cookies if cookies in ("auto", "upload", "browser", "none") else "auto"
+
+    if "youtube.com" in url or "youtu.be" in url:
+        _ensure_pot_server()
 
     ydl_opts = _yt_dlp_base_opts(url, "video", "best", cookies_mode)
 
