@@ -304,7 +304,7 @@ def _yt_dlp_base_opts(url: str, format_type: str, quality: str, cookies_mode: st
     cookiefile = _maybe_cookiefile(cookies_mode)
     opts = {
         "quiet": True,
-        "no_warnings": True,
+        "no_warnings": False,
         "skip_download": True,
         "noplaylist": True,
         "format": _build_format_selector(format_type, quality),
@@ -488,7 +488,7 @@ def download(req: DownloadRequest):
             "outtmpl": outtmpl,
             "noplaylist": True,
             "quiet": True,
-            "no_warnings": True,
+            "no_warnings": False,
             "restrictfilenames": True,
             "windowsfilenames": True,
             "trim_file_name": 200,
