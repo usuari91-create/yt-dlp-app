@@ -315,6 +315,7 @@ def _yt_dlp_base_opts(url: str, format_type: str, quality: str, cookies_mode: st
         opts["cookiefile"] = cookiefile
     if _has_node():
         opts["js_runtimes"] = {"node": {}}
+        opts["remote_components"] = {"ejs:github"}
     return opts
 
 
@@ -503,6 +504,7 @@ def download(req: DownloadRequest):
             ydl_opts["cookiefile"] = cookiefile
         if _has_node():
             ydl_opts["js_runtimes"] = {"node": {}}
+            ydl_opts["remote_components"] = {"ejs:github"}
 
         log.info("Starting download: url=%s type=%s quality=%s cookies=%s",
                  url, req.format_type, req.quality, cookies_mode)
