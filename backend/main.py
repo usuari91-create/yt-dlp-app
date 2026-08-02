@@ -136,6 +136,21 @@ def _has_node() -> bool:
     return shutil.which("node") is not None
 
 
+def _has_deno() -> bool:
+    return shutil.which("deno") is not None
+
+
+def _js_runtimes() -> dict:
+    """Motores JS a pasarle a yt-dlp: node (para bgutil/legacy) y deno
+    (necesario para el sistema EJS que resuelve los retos de firma)."""
+    runtimes = {}
+    if _has_node():
+        runtimes["node"] = {}
+    if _has_deno():
+        runtimes["deno"] = {}
+    return runtimes
+
+
 def _has_bgutil_built() -> bool:
     return (BGUTIL_DIR / "build" / "main.js").exists()
 
@@ -314,8 +329,10 @@ def _yt_dlp_base_opts(url: str, format_type: str, quality: str, cookies_mode: st
     if cookiefile:
         opts["cookiefile"] = cookiefile
     if _has_node():
-        opts["js_runtimes"] = {"node": {}}
         opts["remote_components"] = {"ejs:github"}
+    runtimes = _js_runtimes()
+    if runtimes:
+        opts["js_runtimes"] = runtimes
     return opts
 
 
@@ -330,6 +347,7 @@ def health():
         "yt_dlp_version": yt_dlp.version.__version__,
         "ffmpeg": bool(shutil.which("ffmpeg")),
         "node": _has_node(),
+        "deno": _has_deno(),
         "pot_server": _pot_server_up(),
         "pot_server_port": POT_PORT if _pot_server_up() else None,
         "cookies_configured": COOKIES_FILE.exists() and COOKIES_FILE.stat().st_size > 0,
@@ -519,8 +537,10 @@ def download(req: DownloadRequest):
             "max_filesize": MAX_FILE_SIZE,
         }
         if _has_node():
-            base_ydl_opts["js_runtimes"] = {"node": {}}
             base_ydl_opts["remote_components"] = {"ejs:github"}
+        runtimes = _js_runtimes()
+        if runtimes:
+            base_ydl_opts["js_runtimes"] = runtimes
 
         # Igual que en /api/info: las cookies de cuenta rompen el PO Token
         # anonimo para videos publicos normales, asi que en modo "auto"
