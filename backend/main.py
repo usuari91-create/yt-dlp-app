@@ -344,20 +344,37 @@ def get_info(url: str = Query(..., min_length=1), cookies: str = "auto"):
     if "youtube.com" in url or "youtu.be" in url:
         _ensure_pot_server()
 
-    ydl_opts = _yt_dlp_base_opts(url, "video", "best", cookies_mode)
+    info = None
+    last_error = None
 
-    try:
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            info = ydl.extract_info(url, download=False)
-    except yt_dlp.utils.DownloadError as e:
-        log.exception("extract_info failed")
+    # Estrategia "auto": las cookies de cuenta rompen el PO Token anonimo de
+    # bgutil para videos publicos normales, asi que probamos SIN cookies
+    # primero. Solo si eso falla por bloqueo real, reintentamos con cookies.
+    attempts = [cookies_mode]
+    if cookies_mode == "auto":
+        attempts = ["none", "auto"]
+
+    for attempt_mode in attempts:
+        ydl_opts = _yt_dlp_base_opts(url, "video", "best", attempt_mode)
+        try:
+            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                info = ydl.extract_info(url, download=False)
+            last_error = None
+            break
+        except yt_dlp.utils.DownloadError as e:
+            log.warning("extract_info failed (cookies=%s): %s", attempt_mode, e)
+            last_error = e
+            continue
+        except Exception as e:
+            log.exception("extract_info unexpected error")
+            raise HTTPException(status_code=500, detail=f"Unexpected error: {e}")
+
+    if last_error is not None and info is None:
+        log.exception("extract_info failed on all attempts")
         raise HTTPException(
             status_code=400,
-            detail=_friendly_youtube_error(str(e)),
+            detail=_friendly_youtube_error(str(last_error)),
         )
-    except Exception as e:
-        log.exception("extract_info unexpected error")
-        raise HTTPException(status_code=500, detail=f"Unexpected error: {e}")
 
     if not info:
         raise HTTPException(status_code=400, detail="No info returned for that URL")
@@ -487,7 +504,7 @@ def download(req: DownloadRequest):
     try:
         outtmpl = str(tmpdir / "%(title).200B.%(ext)s")
 
-        ydl_opts = {
+        base_ydl_opts = {
             "outtmpl": outtmpl,
             "noplaylist": True,
             "quiet": True,
@@ -499,27 +516,46 @@ def download(req: DownloadRequest):
             "postprocessors": _postprocessors(req.format_type, req.quality),
             "merge_output_format": "mp4" if req.format_type == "video" else "mp3",
             "noprogress": True,
-            "extractor_args": _common_extractor_args(cookies_mode),
             "max_filesize": MAX_FILE_SIZE,
         }
-        cookiefile = _maybe_cookiefile(cookies_mode)
-        if cookiefile:
-            ydl_opts["cookiefile"] = cookiefile
         if _has_node():
-            ydl_opts["js_runtimes"] = {"node": {}}
-            ydl_opts["remote_components"] = {"ejs:github"}
+            base_ydl_opts["js_runtimes"] = {"node": {}}
+            base_ydl_opts["remote_components"] = {"ejs:github"}
 
-        log.info("Starting download: url=%s type=%s quality=%s cookies=%s",
-                 url, req.format_type, req.quality, cookies_mode)
-        try:
-            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                info = ydl.extract_info(url, download=True)
-        except yt_dlp.utils.DownloadError as e:
-            log.exception("download failed")
-            raise HTTPException(status_code=400, detail=_friendly_youtube_error(str(e)))
-        except Exception as e:
-            log.exception("download unexpected error")
-            raise HTTPException(status_code=500, detail=f"Unexpected error: {e}")
+        # Igual que en /api/info: las cookies de cuenta rompen el PO Token
+        # anonimo para videos publicos normales, asi que en modo "auto"
+        # probamos primero SIN cookies y solo caemos a cookies si hace falta.
+        attempts = [cookies_mode]
+        if cookies_mode == "auto":
+            attempts = ["none", "auto"]
+
+        info = None
+        last_error = None
+        for attempt_mode in attempts:
+            ydl_opts = dict(base_ydl_opts)
+            ydl_opts["extractor_args"] = _common_extractor_args(attempt_mode)
+            cookiefile = _maybe_cookiefile(attempt_mode)
+            if cookiefile:
+                ydl_opts["cookiefile"] = cookiefile
+
+            log.info("Starting download: url=%s type=%s quality=%s cookies=%s",
+                     url, req.format_type, req.quality, attempt_mode)
+            try:
+                with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                    info = ydl.extract_info(url, download=True)
+                last_error = None
+                break
+            except yt_dlp.utils.DownloadError as e:
+                log.warning("download failed (cookies=%s): %s", attempt_mode, e)
+                last_error = e
+                continue
+            except Exception as e:
+                log.exception("download unexpected error")
+                raise HTTPException(status_code=500, detail=f"Unexpected error: {e}")
+
+        if last_error is not None and info is None:
+            log.exception("download failed on all attempts")
+            raise HTTPException(status_code=400, detail=_friendly_youtube_error(str(last_error)))
 
         if not info:
             raise HTTPException(status_code=500, detail="No info returned after download")
