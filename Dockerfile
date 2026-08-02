@@ -1,11 +1,17 @@
 FROM python:3.11-slim
 
-# ---- Dependencias de sistema: ffmpeg, node, git ----
+# ---- Dependencias de sistema: ffmpeg, node, deno, git ----
 RUN apt-get update && apt-get install -y --no-install-recommends \
-        ffmpeg git curl ca-certificates gnupg \
+        ffmpeg git curl unzip ca-certificates gnupg \
     && curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
     && apt-get install -y --no-install-recommends nodejs \
     && rm -rf /var/lib/apt/lists/*
+
+# Deno: motor JS que necesita el sistema EJS de yt-dlp para resolver
+# los retos de firma que pone YouTube en la mayoria de videos.
+RUN curl -fsSL https://deno.land/install.sh | sh -s -- -y \
+    && mv /root/.deno/bin/deno /usr/local/bin/deno \
+    && deno --version
 
 WORKDIR /app
 
