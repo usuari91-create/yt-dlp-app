@@ -33,7 +33,7 @@ from typing import Optional
 
 import httpx
 import yt_dlp
-from fastapi import FastAPI, HTTPException, Query, UploadFile, File
+from fastapi import FastAPI, HTTPException, Query, UploadFile, File, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel, Field, HttpUrl
@@ -80,48 +80,126 @@ app.add_middleware(
 
 
 # ----------------------------------------------------------------------------
-# Autenticacion basica opcional (util en Render, que no tiene proxy propio)
-# Se activa solo si defines APP_USER y APP_PASSWORD como variables de entorno.
+# Autenticacion con cookie de sesion (opcional). Se activa solo si defines
+# APP_USER y APP_PASSWORD como variables de entorno. A diferencia del Basic
+# Auth nativo del navegador, esto usa un login normal + cookie, que el
+# navegador (incluido movil) recuerda solo sin volver a preguntar.
 # ----------------------------------------------------------------------------
 
-import base64
+import hmac
+import hashlib
 import secrets
 from starlette.middleware.base import BaseHTTPMiddleware
-from starlette.responses import Response
+from starlette.responses import Response, RedirectResponse, HTMLResponse
 
 _APP_USER = os.environ.get("APP_USER")
 _APP_PASSWORD = os.environ.get("APP_PASSWORD")
 
+SESSION_COOKIE = "ytdlp_session"
+# Secreto por proceso: cambia en cada redeploy/reinicio, lo que simplemente
+# hace que haya que volver a iniciar sesion (igual que ya pasa con las
+# cookies de YouTube subidas, por el disco no persistente de Render).
+_SESSION_SECRET = secrets.token_bytes(32)
 
-class BasicAuthMiddleware(BaseHTTPMiddleware):
+
+def _make_session_token() -> str:
+    return hmac.new(_SESSION_SECRET, b"authenticated", hashlib.sha256).hexdigest()
+
+
+def _valid_session(request) -> bool:
+    token = request.cookies.get(SESSION_COOKIE)
+    return bool(token) and secrets.compare_digest(token, _make_session_token())
+
+
+_LOGIN_PAGE = """<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Iniciar sesion</title>
+<style>
+  body {{ font-family: system-ui, sans-serif; background:#0b0f1a; color:#eee;
+         display:flex; align-items:center; justify-content:center; height:100vh; margin:0; }}
+  form {{ background:#141a2a; padding:2rem; border-radius:12px; width:min(320px, 90vw); }}
+  h1 {{ font-size:1.1rem; margin:0 0 1.2rem; text-align:center; }}
+  label {{ display:block; font-size:.85rem; margin:.8rem 0 .3rem; color:#aab; }}
+  input {{ width:100%; box-sizing:border-box; padding:.6rem .7rem; border-radius:8px;
+           border:1px solid #2a3350; background:#0b0f1a; color:#eee; }}
+  button {{ margin-top:1.4rem; width:100%; padding:.7rem; border:none; border-radius:8px;
+            background:#ff5555; color:#fff; font-weight:600; font-size:1rem; }}
+  .err {{ color:#ff8080; font-size:.85rem; margin-top:.8rem; text-align:center; }}
+</style>
+</head>
+<body>
+  <form method="post" action="/login">
+    <h1>Acceso privado</h1>
+    <label>Usuario</label>
+    <input name="user" autocomplete="username" required autofocus>
+    <label>Contrasena</label>
+    <input name="password" type="password" autocomplete="current-password" required>
+    <button type="submit">Entrar</button>
+    {error_html}
+  </form>
+</body>
+</html>"""
+
+
+@app.get("/login", response_class=HTMLResponse)
+def login_form():
+    return _LOGIN_PAGE.format(error_html="")
+
+
+@app.post("/login")
+async def login_submit(request: Request):
+    form = await request.form()
+    user = form.get("user", "")
+    password = form.get("password", "")
+    if secrets.compare_digest(user, _APP_USER or "") and secrets.compare_digest(password, _APP_PASSWORD or ""):
+        resp = RedirectResponse(url="/", status_code=303)
+        resp.set_cookie(
+            SESSION_COOKIE,
+            _make_session_token(),
+            max_age=60 * 60 * 24 * 30,
+            httponly=True,
+            samesite="lax",
+            secure=True,
+        )
+        return resp
+    return HTMLResponse(
+        _LOGIN_PAGE.format(error_html='<p class="err">Usuario o contrasena incorrectos</p>'),
+        status_code=401,
+    )
+
+
+@app.post("/logout")
+def logout():
+    resp = RedirectResponse(url="/login", status_code=303)
+    resp.delete_cookie(SESSION_COOKIE)
+    return resp
+
+
+class SessionAuthMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request, call_next):
         if not _APP_USER or not _APP_PASSWORD:
             return await call_next(request)
 
-        # El health check de Render no manda credenciales; hay que dejarlo pasar
-        # siempre o Render pensara que la app no responde.
-        if request.url.path == "/api/health":
+        path = request.url.path
+        # El health check de Render no manda cookies; dejarlo pasar siempre
+        # o Render pensara que la app no responde.
+        if path == "/api/health" or path in ("/login", "/logout"):
             return await call_next(request)
 
-        auth = request.headers.get("authorization")
-        if auth and auth.startswith("Basic "):
-            try:
-                decoded = base64.b64decode(auth.split(" ", 1)[1]).decode()
-                user, _, pwd = decoded.partition(":")
-                if secrets.compare_digest(user, _APP_USER) and secrets.compare_digest(pwd, _APP_PASSWORD):
-                    return await call_next(request)
-            except Exception:
-                pass
+        if _valid_session(request):
+            return await call_next(request)
 
-        return Response(
-            status_code=401,
-            headers={"WWW-Authenticate": "Basic realm=\"yt-dlp-app\""},
-            content="Autenticacion requerida",
-        )
+        if path.startswith("/api/"):
+            return JSONResponse(status_code=401, content={"detail": "Sesion no iniciada"})
+
+        return RedirectResponse(url="/login", status_code=303)
 
 
 if _APP_USER and _APP_PASSWORD:
-    app.add_middleware(BasicAuthMiddleware)
+    app.add_middleware(SessionAuthMiddleware)
 
 
 # ----------------------------------------------------------------------------
