@@ -247,6 +247,35 @@ select {
 
 .cookies-row { margin-top: 8px; }
 
+.playlist-box {
+  margin-top: 18px;
+  border-top: 1px solid var(--border);
+  padding-top: 16px;
+}
+.playlist-head {
+  display: flex; justify-content: space-between; align-items: center;
+  font-size: 14px; margin-bottom: 4px;
+}
+.playlist-actions { display: flex; gap: 8px; margin: 10px 0; }
+.playlist-actions .btn { padding: 6px 12px; font-size: 13px; }
+.playlist-list {
+  list-style: none; margin: 0 0 14px; padding: 0;
+  max-height: 320px; overflow-y: auto;
+  border: 1px solid var(--border); border-radius: 10px;
+}
+.playlist-item {
+  display: flex; align-items: center; gap: 10px;
+  padding: 8px 12px; border-bottom: 1px solid var(--border);
+  font-size: 13px;
+}
+.playlist-item:last-child { border-bottom: none; }
+.playlist-item img {
+  width: 48px; height: 27px; object-fit: cover; border-radius: 4px; flex-shrink: 0;
+  background: var(--bg-soft);
+}
+.playlist-item .pi-title { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.playlist-item .pi-duration { color: var(--text-dim); font-size: 12px; flex-shrink: 0; }
+
 .footer {
   margin-top: 8px;
   display: flex; justify-content: space-between;
