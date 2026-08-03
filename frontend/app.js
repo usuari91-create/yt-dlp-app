@@ -29,6 +29,17 @@
   const segBtns = document.querySelectorAll(".seg-btn");
   const serverStatus = $("server-status");
 
+  const playlistBox = $("playlist-box");
+  const playlistTitle = $("playlist-title");
+  const playlistCount = $("playlist-count");
+  const playlistHint = $("playlist-hint");
+  const playlistList = $("playlist-list");
+  const playlistSelectAll = $("playlist-select-all");
+  const playlistSelectNone = $("playlist-select-none");
+  const playlistDownloadBtn = $("playlist-download-btn");
+  const playlistStatus = $("playlist-status");
+  let currentPlaylist = null;
+
   const cookieFileInput = $("cookie-file");
   const cookieUploadBtn = $("cookie-upload-btn");
   const cookieClearBtn = $("cookie-clear-btn");
@@ -70,6 +81,15 @@
 
   function isYouTube(url) {
     return /youtube\.com|youtu\.be/.test(url || "");
+  }
+
+  function looksLikePlaylist(url) {
+    return /[?&]list=/.test(url || "");
+  }
+
+  function setPlaylistStatus(text, kind = "") {
+    playlistStatus.textContent = text || "";
+    playlistStatus.className = "status" + (kind ? " " + kind : "");
   }
 
   // ---- Health check -----------------------------------------------------
@@ -199,6 +219,13 @@
       } else {
         setStatus("Ready. Choose a format and hit Download.", "");
       }
+
+      if (looksLikePlaylist(url)) {
+        fetchPlaylist(url);
+      } else {
+        playlistBox.hidden = true;
+        currentPlaylist = null;
+      }
     } catch (e) {
       infoBox.hidden = true;
       downloadForm.hidden = true;
@@ -206,6 +233,118 @@
       setStatus(`Could not fetch info: ${e.message}`, "err");
     } finally {
       setBusy(infoBtn, false);
+    }
+  });
+
+  // ---- Playlist ----------------------------------------------------------
+  async function fetchPlaylist(url) {
+    playlistBox.hidden = true;
+    setPlaylistStatus("");
+    try {
+      const r = await fetch(`/api/playlist/info?url=${encodeURIComponent(url)}&cookies=auto`);
+      if (!r.ok) {
+        let msg = `Request failed (${r.status})`;
+        try { const body = await r.json(); if (body && body.detail) msg = body.detail; } catch {}
+        throw new Error(msg);
+      }
+      const data = await r.json();
+      if (!data.is_playlist || !data.entries || data.entries.length <= 1) {
+        currentPlaylist = null;
+        return; // single video, nothing extra to show
+      }
+      currentPlaylist = data;
+      renderPlaylist(data);
+      playlistBox.hidden = false;
+    } catch (e) {
+      currentPlaylist = null;
+      // Silent: the single-video info above already loaded fine, so don't
+      // block the whole UI just because the playlist listing failed.
+      console.warn("playlist info failed:", e.message);
+    }
+  }
+
+  function renderPlaylist(data) {
+    playlistTitle.textContent = data.title || "Playlist";
+    const shown = Math.min(data.entries.length, data.max_items || data.entries.length);
+    playlistCount.textContent = `${data.count} videos`;
+    if (data.max_items && data.count > data.max_items) {
+      playlistHint.textContent = `Only the first ${data.max_items} videos can be downloaded at once (Render free tier limit). Select up to ${data.max_items}.`;
+    } else {
+      playlistHint.textContent = `Select which videos to include, then download them all as a single ZIP.`;
+    }
+
+    playlistList.innerHTML = "";
+    data.entries.slice(0, data.max_items || data.entries.length).forEach((entry, idx) => {
+      const li = document.createElement("li");
+      li.className = "playlist-item";
+      li.innerHTML = `
+        <input type="checkbox" class="pi-check" data-idx="${idx}" checked>
+        <img src="${entry.thumbnail || ""}" alt="">
+        <span class="pi-title">${idx + 1}. ${entry.title || "(untitled)"}</span>
+        <span class="pi-duration">${fmtDuration(entry.duration)}</span>
+      `;
+      playlistList.appendChild(li);
+    });
+  }
+
+  playlistSelectAll.addEventListener("click", () => {
+    playlistList.querySelectorAll(".pi-check").forEach((c) => (c.checked = true));
+  });
+  playlistSelectNone.addEventListener("click", () => {
+    playlistList.querySelectorAll(".pi-check").forEach((c) => (c.checked = false));
+  });
+
+  playlistDownloadBtn.addEventListener("click", async () => {
+    if (!currentPlaylist) return;
+    const shownEntries = currentPlaylist.entries.slice(0, currentPlaylist.max_items || currentPlaylist.entries.length);
+    const selected = [];
+    playlistList.querySelectorAll(".pi-check").forEach((c) => {
+      if (c.checked) selected.push(shownEntries[Number(c.dataset.idx)]);
+    });
+    if (selected.length === 0) {
+      setPlaylistStatus("Select at least one video first.", "warn");
+      return;
+    }
+
+    setBusy(playlistDownloadBtn, true);
+    setPlaylistStatus(`Downloading ${selected.length} video(s)… this can take a while, please be patient.`, "busy");
+
+    try {
+      const r = await fetch("/api/download/playlist", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          urls: selected.map((e) => e.url),
+          format_type: formatType,
+          quality: qualitySel.value,
+          cookies: "auto",
+        }),
+      });
+
+      if (!r.ok) {
+        let msg = `Request failed (${r.status})`;
+        try { const body = await r.json(); if (body && body.detail) msg = body.detail; } catch {}
+        throw new Error(msg);
+      }
+
+      const failedCount = r.headers.get("X-Failed-Count");
+      const blob = await r.blob();
+      const sizeMB = (blob.size / (1024 * 1024)).toFixed(2);
+      const blobUrl = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = blobUrl;
+      a.download = "playlist.zip";
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      setTimeout(() => URL.revokeObjectURL(blobUrl), 60_000);
+
+      const note = failedCount ? ` (${failedCount} failed, check individually)` : "";
+      setPlaylistStatus(`Done — playlist.zip (${sizeMB} MB)${note}`, "ok");
+    } catch (e) {
+      setPlaylistStatus(`Download failed: ${e.message}`, "err");
+    } finally {
+      setBusy(playlistDownloadBtn, false);
     }
   });
 
