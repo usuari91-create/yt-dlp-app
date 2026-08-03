@@ -587,6 +587,89 @@ def _friendly_youtube_error(raw: str) -> str:
     return s[:500]
 
 
+def _download_one(url: str, format_type: str, quality: str, cookies_mode: str, out_dir: Path) -> tuple:
+    """Descarga un unico video/audio a out_dir. Devuelve (Path del archivo, info dict).
+    Lanza HTTPException en caso de fallo. Reutilizada tanto por /api/download
+    como por la descarga de listas de reproduccion."""
+    outtmpl = str(out_dir / "%(title).200B.%(ext)s")
+
+    base_ydl_opts = {
+        "outtmpl": outtmpl,
+        "noplaylist": True,
+        "quiet": True,
+        "no_warnings": False,
+        "restrictfilenames": True,
+        "windowsfilenames": True,
+        "trim_file_name": 200,
+        "format": _build_format_selector(format_type, quality),
+        "postprocessors": _postprocessors(format_type, quality),
+        "merge_output_format": "mp4" if format_type == "video" else "mp3",
+        "noprogress": True,
+        "max_filesize": MAX_FILE_SIZE,
+    }
+    if _has_node():
+        base_ydl_opts["remote_components"] = {"ejs:github"}
+    runtimes = _js_runtimes()
+    if runtimes:
+        base_ydl_opts["js_runtimes"] = runtimes
+
+    # Las cookies de cuenta rompen el PO Token anonimo para videos publicos
+    # normales, asi que en modo "auto" probamos primero SIN cookies y solo
+    # caemos a cookies si hace falta.
+    attempts = [cookies_mode]
+    if cookies_mode == "auto":
+        attempts = ["none", "auto"]
+
+    info = None
+    last_error = None
+    for attempt_mode in attempts:
+        ydl_opts = dict(base_ydl_opts)
+        ydl_opts["extractor_args"] = _common_extractor_args(attempt_mode)
+        cookiefile = _maybe_cookiefile(attempt_mode)
+        if cookiefile:
+            ydl_opts["cookiefile"] = cookiefile
+
+        log.info("Starting download: url=%s type=%s quality=%s cookies=%s",
+                 url, format_type, quality, attempt_mode)
+        try:
+            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                info = ydl.extract_info(url, download=True)
+            last_error = None
+            break
+        except yt_dlp.utils.DownloadError as e:
+            log.warning("download failed (cookies=%s): %s", attempt_mode, e)
+            last_error = e
+            continue
+        except Exception as e:
+            log.exception("download unexpected error")
+            raise HTTPException(status_code=500, detail=f"Unexpected error: {e}")
+
+    if last_error is not None and info is None:
+        log.exception("download failed on all attempts")
+        raise HTTPException(status_code=400, detail=_friendly_youtube_error(str(last_error)))
+
+    if not info:
+        raise HTTPException(status_code=500, detail="No info returned after download")
+
+    produced = None
+    requested = info.get("requested_downloads") or []
+    if requested and requested[0].get("filepath"):
+        produced = Path(requested[0]["filepath"])
+    if not produced or not produced.exists():
+        files = sorted(
+            (p for p in out_dir.iterdir() if p.is_file()),
+            key=lambda p: p.stat().st_mtime,
+            reverse=True,
+        )
+        if not files:
+            raise HTTPException(status_code=500, detail="Download finished but no file was produced")
+        produced = files[0]
+    if not produced.exists():
+        raise HTTPException(status_code=500, detail="Produced file not found on disk")
+
+    return produced, info
+
+
 @app.post("/api/download")
 def download(req: DownloadRequest):
     url = _validate_url(str(req.url))
@@ -598,81 +681,7 @@ def download(req: DownloadRequest):
 
     tmpdir = Path(tempfile.mkdtemp(prefix="ytdl_", dir=DOWNLOAD_DIR))
     try:
-        outtmpl = str(tmpdir / "%(title).200B.%(ext)s")
-
-        base_ydl_opts = {
-            "outtmpl": outtmpl,
-            "noplaylist": True,
-            "quiet": True,
-            "no_warnings": False,
-            "restrictfilenames": True,
-            "windowsfilenames": True,
-            "trim_file_name": 200,
-            "format": _build_format_selector(req.format_type, req.quality),
-            "postprocessors": _postprocessors(req.format_type, req.quality),
-            "merge_output_format": "mp4" if req.format_type == "video" else "mp3",
-            "noprogress": True,
-            "max_filesize": MAX_FILE_SIZE,
-        }
-        if _has_node():
-            base_ydl_opts["remote_components"] = {"ejs:github"}
-        runtimes = _js_runtimes()
-        if runtimes:
-            base_ydl_opts["js_runtimes"] = runtimes
-
-        # Igual que en /api/info: las cookies de cuenta rompen el PO Token
-        # anonimo para videos publicos normales, asi que en modo "auto"
-        # probamos primero SIN cookies y solo caemos a cookies si hace falta.
-        attempts = [cookies_mode]
-        if cookies_mode == "auto":
-            attempts = ["none", "auto"]
-
-        info = None
-        last_error = None
-        for attempt_mode in attempts:
-            ydl_opts = dict(base_ydl_opts)
-            ydl_opts["extractor_args"] = _common_extractor_args(attempt_mode)
-            cookiefile = _maybe_cookiefile(attempt_mode)
-            if cookiefile:
-                ydl_opts["cookiefile"] = cookiefile
-
-            log.info("Starting download: url=%s type=%s quality=%s cookies=%s",
-                     url, req.format_type, req.quality, attempt_mode)
-            try:
-                with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                    info = ydl.extract_info(url, download=True)
-                last_error = None
-                break
-            except yt_dlp.utils.DownloadError as e:
-                log.warning("download failed (cookies=%s): %s", attempt_mode, e)
-                last_error = e
-                continue
-            except Exception as e:
-                log.exception("download unexpected error")
-                raise HTTPException(status_code=500, detail=f"Unexpected error: {e}")
-
-        if last_error is not None and info is None:
-            log.exception("download failed on all attempts")
-            raise HTTPException(status_code=400, detail=_friendly_youtube_error(str(last_error)))
-
-        if not info:
-            raise HTTPException(status_code=500, detail="No info returned after download")
-
-        produced = None
-        requested = info.get("requested_downloads") or []
-        if requested and requested[0].get("filepath"):
-            produced = Path(requested[0]["filepath"])
-        if not produced or not produced.exists():
-            files = sorted(
-                (p for p in tmpdir.iterdir() if p.is_file()),
-                key=lambda p: p.stat().st_mtime,
-                reverse=True,
-            )
-            if not files:
-                raise HTTPException(status_code=500, detail="Download finished but no file was produced")
-            produced = files[0]
-        if not produced.exists():
-            raise HTTPException(status_code=500, detail="Produced file not found on disk")
+        produced, info = _download_one(url, req.format_type, req.quality, cookies_mode, tmpdir)
 
         ext = produced.suffix.lstrip(".").lower() or ("mp4" if req.format_type == "video" else "mp3")
         media_type = "audio/mpeg" if ext == "mp3" else f"video/{ext if ext.startswith('mp4') else 'mp4'}"
@@ -702,6 +711,166 @@ def download(req: DownloadRequest):
         raise
     except Exception:
         shutil.rmtree(tmpdir, ignore_errors=True)
+        raise
+
+
+# ---- Playlists --------------------------------------------------------------
+
+MAX_PLAYLIST_ITEMS = 20  # limite para no reventar el plan free de Render (RAM/disco/tiempo)
+
+
+class PlaylistDownloadRequest(BaseModel):
+    urls: list = Field(..., min_length=1, max_length=MAX_PLAYLIST_ITEMS)
+    format_type: str = Field(..., pattern="^(video|audio)$")
+    quality: str = "best"
+    cookies: str = "auto"
+
+
+@app.get("/api/playlist/info")
+def get_playlist_info(url: str = Query(..., min_length=1), cookies: str = "auto"):
+    url = _validate_url(url)
+    cookies_mode = cookies if cookies in ("auto", "upload", "browser", "none") else "auto"
+
+    if "youtube.com" in url or "youtu.be" in url:
+        _ensure_pot_server()
+
+    attempts = [cookies_mode]
+    if cookies_mode == "auto":
+        attempts = ["none", "auto"]
+
+    info = None
+    last_error = None
+    for attempt_mode in attempts:
+        opts = {
+            "quiet": True,
+            "no_warnings": False,
+            "skip_download": True,
+            "extract_flat": "in_playlist",
+            "extractor_args": _common_extractor_args(attempt_mode),
+        }
+        cookiefile = _maybe_cookiefile(attempt_mode)
+        if cookiefile:
+            opts["cookiefile"] = cookiefile
+        runtimes = _js_runtimes()
+        if runtimes:
+            opts["js_runtimes"] = runtimes
+        if _has_node():
+            opts["remote_components"] = {"ejs:github"}
+        try:
+            with yt_dlp.YoutubeDL(opts) as ydl:
+                info = ydl.extract_info(url, download=False)
+            last_error = None
+            break
+        except yt_dlp.utils.DownloadError as e:
+            log.warning("playlist info failed (cookies=%s): %s", attempt_mode, e)
+            last_error = e
+            continue
+
+    if last_error is not None and info is None:
+        raise HTTPException(status_code=400, detail=_friendly_youtube_error(str(last_error)))
+    if not info:
+        raise HTTPException(status_code=400, detail="No info returned for that URL")
+
+    entries_raw = info.get("entries")
+    if not entries_raw:
+        return {
+            "is_playlist": False,
+            "title": info.get("title"),
+            "count": 1,
+            "entries": [{
+                "id": info.get("id"),
+                "title": info.get("title"),
+                "url": info.get("webpage_url") or url,
+                "thumbnail": info.get("thumbnail"),
+                "duration": info.get("duration"),
+            }],
+        }
+
+    entries = []
+    for e in entries_raw:
+        if not e:
+            continue
+        vid_url = e.get("url") or e.get("webpage_url")
+        if vid_url and not str(vid_url).startswith("http"):
+            vid_url = f"https://www.youtube.com/watch?v={vid_url}"
+        thumb = e.get("thumbnail")
+        if not thumb and e.get("thumbnails"):
+            thumb = e["thumbnails"][-1].get("url")
+        entries.append({
+            "id": e.get("id"),
+            "title": e.get("title") or "(untitled)",
+            "url": vid_url,
+            "thumbnail": thumb,
+            "duration": e.get("duration"),
+        })
+
+    return {
+        "is_playlist": True,
+        "title": info.get("title") or "Playlist",
+        "count": len(entries),
+        "max_items": MAX_PLAYLIST_ITEMS,
+        "entries": entries,
+    }
+
+
+@app.post("/api/download/playlist")
+def download_playlist(req: PlaylistDownloadRequest):
+    import zipfile
+
+    cookies_mode = req.cookies if req.cookies in ("auto", "upload", "browser", "none") else "auto"
+    urls = [_validate_url(str(u)) for u in req.urls]
+
+    if any(("youtube.com" in u or "youtu.be" in u) for u in urls):
+        _ensure_pot_server()
+
+    batch_dir = Path(tempfile.mkdtemp(prefix="ytdl_batch_", dir=DOWNLOAD_DIR))
+    errors = []
+    produced_files = []
+    try:
+        for i, url in enumerate(urls, start=1):
+            item_dir = batch_dir / f"item_{i}"
+            item_dir.mkdir(parents=True, exist_ok=True)
+            try:
+                produced, info = _download_one(url, req.format_type, req.quality, cookies_mode, item_dir)
+                raw_title = info.get("title") or f"video_{i}"
+                safe = re.sub(r"[^\w\-\. ]+", "_", raw_title).strip()[:120] or f"video_{i}"
+                ext = produced.suffix.lstrip(".").lower() or ("mp4" if req.format_type == "video" else "mp3")
+                produced_files.append((produced, f"{i:02d} - {safe}.{ext}"))
+            except HTTPException as e:
+                errors.append({"url": url, "error": e.detail})
+                continue
+
+        if not produced_files:
+            raise HTTPException(
+                status_code=400,
+                detail=f"No se pudo descargar ningun elemento de la lista. Errores: {errors}",
+            )
+
+        zip_path = batch_dir / "playlist.zip"
+        with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_STORED) as zf:
+            for path, arcname in produced_files:
+                zf.write(path, arcname=arcname)
+
+        log.info("Serving playlist zip: %s items ok, %s failed", len(produced_files), len(errors))
+
+        _schedule_cleanup(zip_path, delay_seconds=60.0)
+        _schedule_cleanup(batch_dir, delay_seconds=65.0)
+
+        headers = {"Content-Disposition": 'attachment; filename="playlist.zip"'}
+        if errors:
+            headers["X-Failed-Count"] = str(len(errors))
+
+        return FileResponse(
+            path=str(zip_path),
+            media_type="application/zip",
+            filename="playlist.zip",
+            headers=headers,
+        )
+    except HTTPException:
+        shutil.rmtree(batch_dir, ignore_errors=True)
+        raise
+    except Exception:
+        shutil.rmtree(batch_dir, ignore_errors=True)
         raise
 
 
