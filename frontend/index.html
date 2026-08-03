@@ -79,6 +79,24 @@
         </button>
         <p id="status" class="status" aria-live="polite"></p>
       </form>
+
+      <div id="playlist-box" class="playlist-box" hidden>
+        <div class="playlist-head">
+          <span>📋 This looks like a playlist: <strong id="playlist-title"></strong></span>
+          <span id="playlist-count" class="badge"></span>
+        </div>
+        <p class="hint" id="playlist-hint"></p>
+        <div class="playlist-actions">
+          <button type="button" class="btn" id="playlist-select-all">Select all</button>
+          <button type="button" class="btn" id="playlist-select-none">Select none</button>
+        </div>
+        <ul id="playlist-list" class="playlist-list"></ul>
+        <button type="button" class="btn primary big" id="playlist-download-btn">
+          <span class="btn-label">Download selected as ZIP</span>
+          <span class="spinner" hidden></span>
+        </button>
+        <p id="playlist-status" class="status" aria-live="polite"></p>
+      </div>
     </section>
 
     <!-- Cookies section -->
